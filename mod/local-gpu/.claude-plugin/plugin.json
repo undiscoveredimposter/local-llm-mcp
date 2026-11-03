@@ -1,0 +1,38 @@
+{
+  "name": "local-gpu",
+  "version": "0.1.0",
+  "description": "Per-session toggle for the local-gpu MCP server, with a pane splitting Claude and local-model work and estimating savings",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "Server URL",
+      "description": "Streamable HTTP endpoint of the local-gpu MCP server, e.g. http://desktop:8765/mcp",
+      "default": "http://desktop:8765/mcp"
+    },
+    "token": {
+      "type": "string",
+      "title": "Bearer token",
+      "description": "The LGM_TOKEN the server was started with",
+      "sensitive": true
+    },
+    "defaultOn": {
+      "type": "boolean",
+      "title": "On at session start",
+      "description": "Whether local GPU tools are usable until you run /local off",
+      "default": false
+    },
+    "inputPricePerMTok": {
+      "type": "number",
+      "title": "Claude input price ($ per million tokens)",
+      "description": "Price of the Claude model you would otherwise use, for savings estimates",
+      "default": 3
+    },
+    "outputPricePerMTok": {
+      "type": "number",
+      "title": "Claude output price ($ per million tokens)",
+      "description": "Price of the Claude model you would otherwise use, for savings estimates",
+      "default": 15
+    }
+  }
+}
