@@ -37,15 +37,15 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
                   max_tokens: int, temperature: float, if_busy: str) -> list:
         messages = ([{"role": "system", "content": system}] if system else []) + [
             {"role": "user", "content": prompt}]
-        queued = time.monotonic()
-        async with gpu.use(mode, tool, if_busy) as switched:
-            start = time.monotonic()
+        start = time.monotonic()
+        async with gpu.use(mode, tool, if_busy) as slot:
             reply = await llm.chat(model, messages, max_tokens=max_tokens, temperature=temperature)
         usage = Usage(
-            tool=tool, model=reply.model, mode=mode, seconds=round(time.monotonic() - start, 2),
-            wait_seconds=round(start - queued, 2),
+            tool=tool, model=reply.model, mode=mode,
+            seconds=round(time.monotonic() - start - slot.wait_seconds, 2),
+            wait_seconds=slot.wait_seconds,
             prompt_tokens=reply.prompt_tokens, completion_tokens=reply.completion_tokens,
-            mode_switched=switched, estimated=reply.estimated)
+            mode_switched=slot.switched, estimated=reply.estimated)
         return [reply.text, usage.block()]
 
     @mcp.tool()
@@ -88,18 +88,17 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
             if ctx:
                 await ctx.report_progress(fraction, 1.0)
 
-        queued = time.monotonic()
-        async with gpu.use("image", "generate_image", if_busy) as switched:
-            start = time.monotonic()
+        start = time.monotonic()
+        async with gpu.use("image", "generate_image", if_busy) as slot:
             png = await comfy.generate(wf, progress)
-        seconds = round(time.monotonic() - start, 2)
+        seconds = round(time.monotonic() - start - slot.wait_seconds, 2)
 
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         path = settings.output_dir / f"{int(time.time())}-{seed}.png"
         path.write_bytes(png)
         usage = Usage(tool="generate_image", model=Path(settings.comfy_checkpoint).stem,
-                      mode="image", seconds=seconds, wait_seconds=round(start - queued, 2),
-                      mode_switched=switched,
+                      mode="image", seconds=seconds, wait_seconds=slot.wait_seconds,
+                      mode_switched=slot.switched,
                       width=width, height=height, steps=steps)
         out: list = [f"Saved {path.resolve()} (seed {seed})"]
         if inline_preview:
@@ -124,12 +123,12 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
         Tools switch automatically, so use this only to pre-warm or release the GPU."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        async with gpu.use(mode, "set_mode", if_busy) as switched:
+        async with gpu.use(mode, "set_mode", if_busy) as slot:
             if mode in ("code", "chat"):
                 model = settings.code_model if mode == "code" else settings.chat_model
                 await llm.chat(model, [{"role": "user", "content": "hi"}],
                                max_tokens=1, temperature=0.0)
-        return {"mode": mode, "switched": switched}
+        return {"mode": mode, "switched": slot.switched}
 
     return mcp
 

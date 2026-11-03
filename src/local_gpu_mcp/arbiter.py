@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from .backends import ComfyClient, LlamaSwap
@@ -34,6 +35,12 @@ IF_BUSY = ("report", "wait")
 
 class GpuBusy(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class Slot:
+    switched: bool
+    wait_seconds: float
 
 
 class GpuLock:
@@ -125,16 +132,18 @@ class GpuArbiter:
         return self._gpu.holder()
 
     @asynccontextmanager
-    async def use(self, mode: str, tool: str, if_busy: str = "report") -> AsyncIterator[bool]:
-        """Hold the GPU in `mode`; yields whether the mode changed."""
+    async def use(self, mode: str, tool: str, if_busy: str = "report") -> AsyncIterator[Slot]:
+        """Hold the GPU in `mode`; yields whether the mode changed and how long the call queued."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         if if_busy not in IF_BUSY:
             raise ValueError(f"if_busy must be one of {IF_BUSY}")
+        queued = time.monotonic()
         async with self._local:
             await self._acquire(tool, if_busy)
             try:
-                yield await self._switch(mode)
+                wait_seconds = round(time.monotonic() - queued, 2)
+                yield Slot(await self._switch(mode), wait_seconds)
             finally:
                 self._gpu.release()
 
