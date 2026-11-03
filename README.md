@@ -48,6 +48,26 @@ claude mcp add --transport http local-gpu http://<desktop-tailscale-name>:8765/m
   --header "Authorization: Bearer $LGM_TOKEN"
 ```
 
+## Windows desktop service
+
+Install the prerequisites, then register the server as a logon task:
+
+```powershell
+winget install astral-sh.uv Tailscale.Tailscale
+uv sync
+.\deploy\windows\install.ps1 -CodeModel <code-profile> -ChatModel <chat-profile>
+```
+
+`install.ps1` writes `%USERPROFILE%\.local-gpu-mcp.env` (the generated bearer token and
+settings), registers a `local-gpu-mcp` scheduled task that waits for Tailscale and binds to its
+address, and adds a firewall rule limited to the Tailscale range when run from an admin
+shell. It prints the token at the end. Remove it with
+`Unregister-ScheduledTask local-gpu-mcp -Confirm:$false`.
+
+It runs as a logon task, not a Windows service, so it needs your account logged in. That also
+matches llama-swap and ComfyUI, which usually run in your session. These scripts have not
+been run on Windows yet.
+
 ## Configuration (environment)
 
 | Variable | Default |
