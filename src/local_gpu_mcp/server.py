@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context, FastMCP, Image
 from PIL import Image as PILImage
 
 from . import workflow
-from .arbiter import MODES, GpuArbiter
+from .arbiter import MODES, GpuArbiter, GpuLock
 from .backends import ComfyClient, LlamaSwap
 from .config import Settings
 from .usage import Usage
@@ -29,15 +29,16 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
             base_url=settings.comfy_url, timeout=settings.image_timeout, transport=transport),
         settings.image_timeout,
     )
-    gpu = GpuArbiter(llm, comfy, settings.coexist)
+    gpu = GpuArbiter(llm, comfy, GpuLock(settings.lock_dir), coexist=settings.coexist,
+                     queue_timeout=settings.queue_timeout)
     mcp = FastMCP("local-gpu")
 
     async def ask(tool: str, mode: str, model: str, prompt: str, system: str | None,
-                  max_tokens: int, temperature: float) -> list:
+                  max_tokens: int, temperature: float, if_busy: str) -> list:
         messages = ([{"role": "system", "content": system}] if system else []) + [
             {"role": "user", "content": prompt}]
-        start = time.monotonic()
-        async with gpu.use(mode) as switched:
+        async with gpu.use(mode, tool, if_busy) as switched:
+            start = time.monotonic()
             reply = await llm.chat(model, messages, max_tokens=max_tokens, temperature=temperature)
         usage = Usage(
             tool=tool, model=reply.model, mode=mode, seconds=round(time.monotonic() - start, 2),
@@ -46,30 +47,36 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
         return [reply.text, usage.block()]
 
     @mcp.tool()
-    async def local_chat(prompt: str, system: str | None = None,
-                         max_tokens: int = 1024, temperature: float = 0.7) -> list:
+    async def local_chat(prompt: str, system: str | None = None, max_tokens: int = 1024,
+                         temperature: float = 0.7, if_busy: str = "report") -> list:
         """Ask the local chat model. Good for drafts, summaries and bulk text that
-        doesn't need Claude. May swap models, which takes a few seconds."""
+        doesn't need Claude. May swap models, which takes a few seconds.
+        If another Claude Code session holds the GPU this fails with a busy message:
+        ask the user whether to retry with if_busy='wait' (queue) or drop the request."""
         return await ask("local_chat", "chat", settings.chat_model, prompt, system,
-                         max_tokens, temperature)
+                         max_tokens, temperature, if_busy)
 
     @mcp.tool()
-    async def local_code(task: str, context: str = "",
-                         max_tokens: int = 2048, temperature: float = 0.2) -> list:
+    async def local_code(task: str, context: str = "", max_tokens: int = 2048,
+                         temperature: float = 0.2, if_busy: str = "report") -> list:
         """Delegate a self-contained coding task to the local code model. Include
-        every file or snippet it needs in `context`: it cannot read your repo."""
+        every file or snippet it needs in `context`: it cannot read your repo.
+        If another Claude Code session holds the GPU this fails with a busy message:
+        ask the user whether to retry with if_busy='wait' (queue) or drop the request."""
         prompt = f"{task}\n\n--- context ---\n{context}" if context else task
         return await ask("local_code", "code", settings.code_model, prompt, CODE_SYSTEM,
-                         max_tokens, temperature)
+                         max_tokens, temperature, if_busy)
 
     @mcp.tool()
     async def generate_image(
         prompt: str, negative: str = "", width: int = 1024, height: int = 1024,
         steps: int = 25, cfg: float = 7.0, seed: int = -1,
-        inline_preview: bool = True, ctx: Context | None = None,
+        inline_preview: bool = True, if_busy: str = "report", ctx: Context | None = None,
     ) -> list:
         """Generate an image with ComfyUI. Frees the LLM's VRAM first. The full image
-        is saved on the desktop; the inline preview is a small thumbnail."""
+        is saved on the desktop; the inline preview is a small thumbnail.
+        If another Claude Code session holds the GPU this fails with a busy message:
+        ask the user whether to retry with if_busy='wait' (queue) or drop the request."""
         seed = seed if seed >= 0 else int.from_bytes(os.urandom(4), "big")
         wf = workflow.render(settings.comfy_workflow, {
             "prompt": prompt, "negative": negative, "width": width, "height": height,
@@ -79,8 +86,8 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
             if ctx:
                 await ctx.report_progress(fraction, 1.0)
 
-        start = time.monotonic()
-        async with gpu.use("image") as switched:
+        async with gpu.use("image", "generate_image", if_busy) as switched:
+            start = time.monotonic()
             png = await comfy.generate(wf, progress)
         seconds = round(time.monotonic() - start, 2)
 
@@ -97,8 +104,9 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
 
     @mcp.tool()
     async def gpu_status() -> dict:
-        """Report the current GPU mode and which LLM profiles llama-swap has loaded."""
-        return {"mode": gpu.mode, "loaded_models": await llm.running()}
+        """Report the GPU mode, which session holds the GPU (if any) and which LLM
+        profiles llama-swap has loaded."""
+        return {"mode": gpu.mode, "holder": gpu.holder(), "loaded_models": await llm.running()}
 
     @mcp.tool()
     async def list_models() -> dict:
@@ -107,12 +115,12 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
                 "code_model": settings.code_model, "chat_model": settings.chat_model}
 
     @mcp.tool()
-    async def set_mode(mode: str) -> dict:
+    async def set_mode(mode: str, if_busy: str = "report") -> dict:
         """Switch the GPU to 'code', 'chat', 'image' or 'idle', freeing VRAM as needed.
         Tools switch automatically, so use this only to pre-warm or release the GPU."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        async with gpu.use(mode) as switched:
+        async with gpu.use(mode, "set_mode", if_busy) as switched:
             if mode in ("code", "chat"):
                 model = settings.code_model if mode == "code" else settings.chat_model
                 await llm.chat(model, [{"role": "user", "content": "hi"}],

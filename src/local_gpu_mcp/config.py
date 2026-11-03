@@ -17,6 +17,8 @@ class Settings:
     coexist: bool = False
     llm_timeout: float = 300.0
     image_timeout: float = 300.0
+    queue_timeout: float = 600.0
+    lock_dir: Path = Path.home() / ".local-gpu-mcp"
     token: str | None = None
 
     @classmethod
@@ -34,5 +36,7 @@ class Settings:
             coexist=e("LGM_COEXIST", "0") == "1",
             llm_timeout=float(e("LGM_LLM_TIMEOUT", d.llm_timeout)),
             image_timeout=float(e("LGM_IMAGE_TIMEOUT", d.image_timeout)),
+            queue_timeout=float(e("LGM_QUEUE_TIMEOUT", d.queue_timeout)),
+            lock_dir=Path(e("LGM_LOCK_DIR", str(d.lock_dir))),
             token=e("LGM_TOKEN") or None,
         )

@@ -15,7 +15,17 @@ models (via [llama-swap](https://github.com/mostlygeek/llama-swap)) and image ge
 | `set_mode` | Pre-warm `code`/`chat`, or free the GPU with `idle` |
 
 Tools switch mode automatically. Crossing LLM <-> image unloads the other side
-(`llama-swap /unload`, ComfyUI `/free`) unless `LGM_COEXIST=1`. GPU jobs are serialised.
+(`llama-swap /unload`, ComfyUI `/free`) unless `LGM_COEXIST=1`.
+
+### Sharing the GPU between sessions
+
+Each Claude Code session starts its own stdio server, so they coordinate through an OS file
+lock in `LGM_LOCK_DIR`, which also stores the current mode. The first call in holds the GPU.
+A call from another session fails straight away with who holds it, for example
+`GPU busy: another Claude Code session (pid 12848) is running local_code, started 40s ago.`
+Claude then asks you whether to queue it (retry with `if_busy="wait"`, which polls until the
+GPU is free or `LGM_QUEUE_TIMEOUT` passes) or drop it. Calls from the same session queue
+silently. `gpu_status` shows the holder. The OS releases the lock if a session dies.
 
 ### Usage metadata
 
@@ -80,6 +90,8 @@ been run on Windows yet.
 | `LGM_OUTPUT_DIR` | `outputs` |
 | `LGM_COEXIST` | `0` (set `1` if VRAM fits both) |
 | `LGM_LLM_TIMEOUT` / `LGM_IMAGE_TIMEOUT` | `300` seconds |
+| `LGM_QUEUE_TIMEOUT` | `600` seconds (`if_busy="wait"`) |
+| `LGM_LOCK_DIR` | `~/.local-gpu-mcp` |
 | `LGM_TOKEN` | unset |
 
 ### Custom image workflows
