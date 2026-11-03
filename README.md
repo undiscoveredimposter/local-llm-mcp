@@ -32,12 +32,14 @@ silently. `gpu_status` shows the holder. The OS releases the lock if a session d
 Every LLM and image result ends with one text block, `local-gpu-usage: {json}`:
 
 ```json
-{"tool":"local_code","model":"qwen-coder","mode":"code","seconds":4.1,"prompt_tokens":40,
- "completion_tokens":12,"mode_switched":true,"estimated":false,"backend":"local"}
+{"tool":"local_code","model":"qwen-coder","mode":"code","seconds":4.1,"wait_seconds":0.0,
+ "prompt_tokens":40,"completion_tokens":12,"mode_switched":true,"estimated":false,"backend":"local"}
 ```
 
 Image calls add `width`, `height`, `steps`. `estimated` is true when llama-swap returned
-no token counts (characters / 4 is used instead). The planned Claude mod reads this block.
+no token counts (characters / 4 is used instead). `seconds` is GPU time; `wait_seconds` is
+time spent queued for the GPU. A call that fails (including a busy GPU) has no usage block.
+Keep the prefix, field names and tool names stable: the local-gpu Claude mod reads them.
 
 ## Run
 

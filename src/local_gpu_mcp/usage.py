@@ -12,6 +12,7 @@ class Usage:
     model: str
     mode: str
     seconds: float
+    wait_seconds: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     mode_switched: bool = False

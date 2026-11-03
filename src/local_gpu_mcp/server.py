@@ -37,11 +37,13 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
                   max_tokens: int, temperature: float, if_busy: str) -> list:
         messages = ([{"role": "system", "content": system}] if system else []) + [
             {"role": "user", "content": prompt}]
+        queued = time.monotonic()
         async with gpu.use(mode, tool, if_busy) as switched:
             start = time.monotonic()
             reply = await llm.chat(model, messages, max_tokens=max_tokens, temperature=temperature)
         usage = Usage(
             tool=tool, model=reply.model, mode=mode, seconds=round(time.monotonic() - start, 2),
+            wait_seconds=round(start - queued, 2),
             prompt_tokens=reply.prompt_tokens, completion_tokens=reply.completion_tokens,
             mode_switched=switched, estimated=reply.estimated)
         return [reply.text, usage.block()]
@@ -86,6 +88,7 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
             if ctx:
                 await ctx.report_progress(fraction, 1.0)
 
+        queued = time.monotonic()
         async with gpu.use("image", "generate_image", if_busy) as switched:
             start = time.monotonic()
             png = await comfy.generate(wf, progress)
@@ -95,7 +98,8 @@ def create_server(settings: Settings, *, transport: httpx.AsyncBaseTransport | N
         path = settings.output_dir / f"{int(time.time())}-{seed}.png"
         path.write_bytes(png)
         usage = Usage(tool="generate_image", model=Path(settings.comfy_checkpoint).stem,
-                      mode="image", seconds=seconds, mode_switched=switched,
+                      mode="image", seconds=seconds, wait_seconds=round(start - queued, 2),
+                      mode_switched=switched,
                       width=width, height=height, steps=steps)
         out: list = [f"Saved {path.resolve()} (seed {seed})"]
         if inline_preview:

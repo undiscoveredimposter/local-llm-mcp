@@ -80,6 +80,7 @@ async def test_local_code_reports_usage(tmp_path, backends):
     assert (u["tool"], u["backend"], u["prompt_tokens"], u["completion_tokens"]) == (
         "local_code", "local", 40, 12)
     assert u["estimated"] is False and u["mode_switched"] is True
+    assert u["wait_seconds"] < 0.2
 
 
 async def test_usage_is_estimated_when_backend_omits_it(tmp_path):
@@ -151,6 +152,7 @@ async def test_wait_queues_until_gpu_is_free(tmp_path, backends):
     held.release()
     blocks = await asyncio.wait_for(job, 5)
     assert blocks[0].text == "def f(): ..."
+    assert usage_of(blocks)["wait_seconds"] >= 0.2
 
 
 async def test_wait_gives_up_after_queue_timeout(tmp_path, backends):
