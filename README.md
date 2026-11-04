@@ -15,19 +15,31 @@ models (via [llama-swap](https://github.com/mostlygeek/llama-swap)) and image ge
 | `set_mode` | Pre-warm `code`/`chat`, or free the GPU with `idle` |
 
 Tools switch mode automatically. Crossing LLM <-> image unloads the other side
-(`llama-swap /unload`, ComfyUI `/free`) unless `LGM_COEXIST=1`. GPU jobs are serialised.
+(`llama-swap /unload`, ComfyUI `/free`) unless `LGM_COEXIST=1`.
+
+### Sharing the GPU between sessions
+
+Each Claude Code session starts its own stdio server, so they coordinate through an OS file
+lock in `LGM_LOCK_DIR`, which also stores the current mode. The first call in holds the GPU.
+A call from another session fails straight away with who holds it, for example
+`GPU busy: another Claude Code session (pid 12848) is running local_code, started 40s ago.`
+Claude then asks you whether to queue it (retry with `if_busy="wait"`, which polls until the
+GPU is free or `LGM_QUEUE_TIMEOUT` passes) or drop it. Calls from the same session queue
+silently. `gpu_status` shows the holder. The OS releases the lock if a session dies.
 
 ### Usage metadata
 
 Every LLM and image result ends with one text block, `local-gpu-usage: {json}`:
 
 ```json
-{"tool":"local_code","model":"qwen-coder","mode":"code","seconds":4.1,"prompt_tokens":40,
- "completion_tokens":12,"mode_switched":true,"estimated":false,"backend":"local"}
+{"tool":"local_code","model":"qwen-coder","mode":"code","seconds":4.1,"wait_seconds":0.0,
+ "prompt_tokens":40,"completion_tokens":12,"mode_switched":true,"estimated":false,"backend":"local"}
 ```
 
 Image calls add `width`, `height`, `steps`. `estimated` is true when llama-swap returned
-no token counts (characters / 4 is used instead). The planned Claude mod reads this block.
+no token counts (characters / 4 is used instead). `seconds` is GPU time; `wait_seconds` is
+time spent queued for the GPU. A call that fails (including a busy GPU) has no usage block.
+Keep the prefix, field names and tool names stable: the local-gpu Claude mod reads them.
 
 ## Run
 
@@ -80,6 +92,8 @@ been run on Windows yet.
 | `LGM_OUTPUT_DIR` | `outputs` |
 | `LGM_COEXIST` | `0` (set `1` if VRAM fits both) |
 | `LGM_LLM_TIMEOUT` / `LGM_IMAGE_TIMEOUT` | `300` seconds |
+| `LGM_QUEUE_TIMEOUT` | `600` seconds (`if_busy="wait"`) |
+| `LGM_LOCK_DIR` | `~/.local-gpu-mcp` |
 | `LGM_TOKEN` | unset |
 
 ### Custom image workflows
